@@ -221,7 +221,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 DashboardTab(onNavigate: navigateToTab),
                 TransactionsTab(type: 'lend', filterPerson: _filterPerson, filterStatus: _filterStatus),
                 TransactionsTab(type: 'borrow', filterPerson: _filterPerson, filterStatus: _filterStatus),
-                PeopleTab(onPersonTap: (name) => navigateToTab(1, person: name)),
+                const PeopleTab(),
+                const RemindersTab(),
               ],
             ),
           ),
@@ -237,6 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
               _NavItem(icon: Icons.arrow_upward_rounded, label: 'Lent', active: _currentIndex == 1, color: AppColors.success, onTap: () { clearFilters(); navigateToTab(1); }),
               _NavItem(icon: Icons.arrow_downward_rounded, label: 'Borrowed', active: _currentIndex == 2, color: AppColors.danger, onTap: () { clearFilters(); navigateToTab(2); }),
               _NavItem(icon: Icons.people_rounded, label: 'People', active: _currentIndex == 3, onTap: () { clearFilters(); navigateToTab(3); }),
+              _NavItem(icon: Icons.notifications_active_rounded, label: 'Reminder', active: _currentIndex == 4, onTap: () { clearFilters(); navigateToTab(4); }),
             ]),
           ),
         ),
@@ -466,8 +468,128 @@ class TransactionsTab extends StatelessWidget {
 }
 
 class PeopleTab extends StatelessWidget {
-  final Function(String) onPersonTap;
-  const PeopleTab({super.key, required this.onPersonTap});
+  const PeopleTab({super.key});
+
+  void _showPersonHistory(BuildContext context, String personName) {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) => Container(
+          decoration: const BoxDecoration(color: AppColors.cardBg, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(children: [
+                Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(gradient: const LinearGradient(colors: [AppColors.primary, AppColors.primaryLight]), borderRadius: BorderRadius.circular(14)),
+                    child: Center(child: Text(personName.isNotEmpty ? personName[0].toUpperCase() : '?', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white))),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(personName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.text))),
+                  IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary)),
+                ]),
+              ]),
+            ),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance.collection('users').doc(uid).collection('transactions').snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+                  }
+                  final docs = snapshot.data?.docs ?? [];
+                  var transactions = docs
+                      .map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id})
+                      .where((t) => (t['person'] ?? t['personName']) == personName)
+                      .toList();
+                  transactions.sort((a, b) {
+                    final aTime = a['createdAt'] as Timestamp?;
+                    final bTime = b['createdAt'] as Timestamp?;
+                    if (aTime == null && bTime == null) return 0;
+                    if (aTime == null) return 1;
+                    if (bTime == null) return -1;
+                    return bTime.compareTo(aTime);
+                  });
+
+                  double toReceive = 0;
+                  double toPay = 0;
+                  for (final t in transactions) {
+                    final isPending = t['status'] == 'pending' || t['settled'] != true;
+                    if (!isPending) continue;
+                    final amount = (t['amount'] ?? 0).toDouble();
+                    if (t['type'] == 'lend') toReceive += amount;
+                    if (t['type'] == 'borrow') toPay += amount;
+                  }
+
+                  if (transactions.isEmpty) {
+                    return Center(
+                      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(Icons.history_rounded, size: 64, color: AppColors.textSecondary.withOpacity(0.3)),
+                        const SizedBox(height: 16),
+                        const Text('No history for this person', style: TextStyle(color: AppColors.textSecondary)),
+                      ]),
+                    );
+                  }
+
+                  return Column(children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(color: AppColors.success.withOpacity(0.12), borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.success.withOpacity(0.3))),
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              const Text('To Receive', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                              const SizedBox(height: 6),
+                              Text('\u{20B9}${_formatAmount(toReceive)}', style: const TextStyle(color: AppColors.success, fontSize: 18, fontWeight: FontWeight.bold)),
+                            ]),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(color: AppColors.danger.withOpacity(0.12), borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.danger.withOpacity(0.3))),
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              const Text('To Pay', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                              const SizedBox(height: 6),
+                              Text('\u{20B9}${_formatAmount(toPay)}', style: const TextStyle(color: AppColors.danger, fontSize: 18, fontWeight: FontWeight.bold)),
+                            ]),
+                          ),
+                        ),
+                      ]),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: ListView.builder(
+                        controller: scrollController,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: transactions.length,
+                        itemBuilder: (context, i) => TransactionCard(transaction: transactions[i], showActions: true),
+                      ),
+                    ),
+                  ]);
+                },
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser!.uid;
@@ -509,7 +631,7 @@ class PeopleTab extends StatelessWidget {
                         final count = peopleCounts[name] ?? 0;
                         final isPositive = balance >= 0;
                         return GestureDetector(
-                          onTap: () => onPersonTap(name),
+                          onTap: () => _showPersonHistory(context, name),
                           child: Container(
                             margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(color: AppColors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border.withOpacity(0.3))),
@@ -531,6 +653,54 @@ class PeopleTab extends StatelessWidget {
                           ),
                         );
                       },
+                    ),
+            ),
+          ]),
+        );
+      },
+    );
+  }
+}
+
+class RemindersTab extends StatelessWidget {
+  const RemindersTab({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('users').doc(uid).collection('transactions').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+        if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: AppColors.danger)));
+
+        final docs = snapshot.data?.docs ?? [];
+        var reminders = docs.map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id}).where((t) {
+          final enabled = (t['reminderEnabled'] == true) || t['reminderAt'] != null;
+          return enabled;
+        }).toList();
+
+        reminders.sort((a, b) {
+          final aAt = _tsToDateTime(a['reminderAt']);
+          final bAt = _tsToDateTime(b['reminderAt']);
+          if (aAt == null && bAt == null) return 0;
+          if (aAt == null) return 1;
+          if (bAt == null) return -1;
+          return aAt.compareTo(bAt);
+        });
+
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Reminders', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.text)),
+            const SizedBox(height: 8),
+            const Text('Transactions with reminder enabled', style: TextStyle(color: AppColors.textSecondary)),
+            const SizedBox(height: 16),
+            Expanded(
+              child: reminders.isEmpty
+                  ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.notifications_off_rounded, size: 64, color: AppColors.textSecondary.withOpacity(0.3)), const SizedBox(height: 16), const Text('No reminders set', style: TextStyle(color: AppColors.textSecondary))]))
+                  : ListView.builder(
+                      itemCount: reminders.length,
+                      itemBuilder: (context, i) => TransactionCard(transaction: reminders[i], showActions: true),
                     ),
             ),
           ]),
