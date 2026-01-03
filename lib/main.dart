@@ -270,11 +270,19 @@ class DashboardTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('users').doc(uid).collection('transactions').orderBy('createdAt', descending: true).snapshots(),
+      stream: FirebaseFirestore.instance.collection('users').doc(uid).collection('transactions').snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: AppColors.primary));
         final docs = snapshot.data?.docs ?? [];
         final transactions = docs.map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id}).toList();
+        transactions.sort((a, b) {
+          final aTime = a['createdAt'] as Timestamp?;
+          final bTime = b['createdAt'] as Timestamp?;
+          if (aTime == null && bTime == null) return 0;
+          if (aTime == null) return 1;
+          if (bTime == null) return -1;
+          return bTime.compareTo(aTime);
+        });
         double lentAmount = 0, borrowedAmount = 0;
         int pendingCount = 0;
         Set<String> people = {};
@@ -412,11 +420,20 @@ class TransactionsTab extends StatelessWidget {
     final isLend = type == 'lend';
     return Stack(children: [
       StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').doc(uid).collection('transactions').where('type', isEqualTo: type).orderBy('createdAt', descending: true).snapshots(),
+        stream: FirebaseFirestore.instance.collection('users').doc(uid).collection('transactions').snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+          if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: AppColors.danger)));
           final docs = snapshot.data?.docs ?? [];
-          var transactions = docs.map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id}).toList();
+          var transactions = docs.map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id}).where((t) => t['type'] == type).toList();
+          transactions.sort((a, b) {
+            final aTime = a['createdAt'] as Timestamp?;
+            final bTime = b['createdAt'] as Timestamp?;
+            if (aTime == null && bTime == null) return 0;
+            if (aTime == null) return 1;
+            if (bTime == null) return -1;
+            return bTime.compareTo(aTime);
+          });
           if (filterPerson != null) transactions = transactions.where((t) => (t['person'] ?? t['personName']) == filterPerson).toList();
           if (filterStatus == 'pending') transactions = transactions.where((t) => t['status'] == 'pending' || t['settled'] != true).toList();
           double totalPending = 0;
@@ -477,7 +494,7 @@ class PeopleTab extends StatelessWidget {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text('People', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.text)),
             const SizedBox(height: 8),
-            Text('${sortedPeople.length} active contacts  Tap to view transactions', style: const TextStyle(color: AppColors.textSecondary)),
+            Text('${sortedPeople.length} active contacts \u{2022} Tap to view transactions', style: const TextStyle(color: AppColors.textSecondary)),
             const SizedBox(height: 20),
             Expanded(
               child: sortedPeople.isEmpty
@@ -501,7 +518,7 @@ class PeopleTab extends StatelessWidget {
                                 Text(name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.text)),
                                 Row(children: [
                                   Text(isPositive ? 'Owes you' : 'You owe', style: TextStyle(fontSize: 12, color: isPositive ? AppColors.success : AppColors.danger)),
-                                  Text('  $count transactions', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                                  Text(' \u{2022} $count transactions', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                                 ]),
                               ])),
                               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
