@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "647989462746",
+    "project_id": "financehub-9c785",
+    "storage_bucket": "financehub-9c785.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:647989462746:android:b61cca130db2c173dbc7e3",
+        "android_client_info": {
+          "package_name": "com.manan4747.financehub"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "647989462746-jij5660eltuv8v7ouhoad299jg2p35dt.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDj4ZwfUO9twne5Eg3upPmydKYNmGuSE9g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "647989462746-jij5660eltuv8v7ouhoad299jg2p35dt.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
