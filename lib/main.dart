@@ -675,13 +675,14 @@ class RemindersTab extends StatelessWidget {
 
         final docs = snapshot.data?.docs ?? [];
         var reminders = docs.map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id}).where((t) {
-          final enabled = (t['reminderEnabled'] == true) || t['reminderAt'] != null;
+          final reminderAt = _tsToDateTime(t['reminderAt'] ?? t['reminder_at'] ?? t['reminderDate'] ?? t['reminder_date'] ?? t['reminder']);
+          final enabled = _truthy(t['reminderEnabled'] ?? t['reminder_enabled'] ?? t['isReminder'] ?? t['is_reminder']) || reminderAt != null;
           return enabled;
         }).toList();
 
         reminders.sort((a, b) {
-          final aAt = _tsToDateTime(a['reminderAt']);
-          final bAt = _tsToDateTime(b['reminderAt']);
+          final aAt = _tsToDateTime(a['reminderAt'] ?? a['reminder_at'] ?? a['reminderDate'] ?? a['reminder_date'] ?? a['reminder']);
+          final bAt = _tsToDateTime(b['reminderAt'] ?? b['reminder_at'] ?? b['reminderDate'] ?? b['reminder_date'] ?? b['reminder']);
           if (aAt == null && bAt == null) return 0;
           if (aAt == null) return 1;
           if (bAt == null) return -1;
@@ -724,8 +725,8 @@ class TransactionCard extends StatelessWidget {
 
     final date = _tsToDateTime(transaction['date'] ?? transaction['createdAt']);
     final dueDate = _tsToDateTime(transaction['dueDate'] ?? transaction['due_date'] ?? transaction['due']);
-    final reminderAt = _tsToDateTime(transaction['reminderAt']);
-    final reminderEnabled = (transaction['reminderEnabled'] == true) || reminderAt != null;
+    final reminderAt = _tsToDateTime(transaction['reminderAt'] ?? transaction['reminder_at'] ?? transaction['reminderDate'] ?? transaction['reminder_date'] ?? transaction['reminder']);
+    final reminderEnabled = _truthy(transaction['reminderEnabled'] ?? transaction['reminder_enabled'] ?? transaction['isReminder'] ?? transaction['is_reminder']) || reminderAt != null;
     return Container(
       margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: AppColors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border.withOpacity(0.3))),
@@ -828,8 +829,9 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
   final baseDate = _tsToDateTime(transaction?['date']) ?? _tsToDateTime(transaction?['createdAt']) ?? DateTime.now();
   DateTime selectedDate = DateTime(baseDate.year, baseDate.month, baseDate.day);
   DateTime? dueDate = _tsToDateTime(transaction?['dueDate'] ?? transaction?['due_date'] ?? transaction?['due']);
-  bool reminderEnabled = (transaction?['reminderEnabled'] == true) || transaction?['reminderAt'] != null;
-  DateTime? reminderAt = _tsToDateTime(transaction?['reminderAt']);
+  final existingReminderAt = _tsToDateTime(transaction?['reminderAt'] ?? transaction?['reminder_at'] ?? transaction?['reminderDate'] ?? transaction?['reminder_date'] ?? transaction?['reminder']);
+  bool reminderEnabled = _truthy(transaction?['reminderEnabled'] ?? transaction?['reminder_enabled'] ?? transaction?['isReminder'] ?? transaction?['is_reminder']) || existingReminderAt != null;
+  DateTime? reminderAt = existingReminderAt;
   showModalBottomSheet(
     context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
     builder: (context) => StatefulBuilder(builder: (context, setState) {
@@ -1170,6 +1172,18 @@ DateTime? _tsToDateTime(dynamic ts) {
     return parseDmy('/') ?? parseDmy('-');
   }
   return null;
+}
+
+bool _truthy(dynamic v) {
+  if (v == null) return false;
+  if (v is bool) return v;
+  if (v is int) return v != 0;
+  if (v is double) return v != 0;
+  if (v is String) {
+    final s = v.trim().toLowerCase();
+    return s == 'true' || s == '1' || s == 'yes' || s == 'y' || s == 'on';
+  }
+  return false;
 }
 
 String _two(int n) => n.toString().padLeft(2, '0');
