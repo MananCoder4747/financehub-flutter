@@ -722,8 +722,8 @@ class TransactionCard extends StatelessWidget {
     final amount = (transaction['amount'] ?? 0).toDouble();
     final desc = transaction['description'] ?? '';
 
-    final date = _tsToDateTime(transaction['date']) ?? _tsToDateTime(transaction['createdAt']);
-    final dueDate = _tsToDateTime(transaction['dueDate']);
+    final date = _tsToDateTime(transaction['date'] ?? transaction['createdAt']);
+    final dueDate = _tsToDateTime(transaction['dueDate'] ?? transaction['due_date'] ?? transaction['due']);
     final reminderAt = _tsToDateTime(transaction['reminderAt']);
     final reminderEnabled = (transaction['reminderEnabled'] == true) || reminderAt != null;
     return Container(
@@ -827,7 +827,7 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
 
   final baseDate = _tsToDateTime(transaction?['date']) ?? _tsToDateTime(transaction?['createdAt']) ?? DateTime.now();
   DateTime selectedDate = DateTime(baseDate.year, baseDate.month, baseDate.day);
-  DateTime? dueDate = _tsToDateTime(transaction?['dueDate']);
+  DateTime? dueDate = _tsToDateTime(transaction?['dueDate'] ?? transaction?['due_date'] ?? transaction?['due']);
   bool reminderEnabled = (transaction?['reminderEnabled'] == true) || transaction?['reminderAt'] != null;
   DateTime? reminderAt = _tsToDateTime(transaction?['reminderAt']);
   showModalBottomSheet(
@@ -1150,6 +1150,25 @@ DateTime? _tsToDateTime(dynamic ts) {
   if (ts == null) return null;
   if (ts is DateTime) return ts;
   if (ts is Timestamp) return ts.toDate();
+  if (ts is int) return DateTime.fromMillisecondsSinceEpoch(ts);
+  if (ts is double) return DateTime.fromMillisecondsSinceEpoch(ts.toInt());
+  if (ts is String) {
+    final parsed = DateTime.tryParse(ts);
+    if (parsed != null) return parsed;
+
+    final s = ts.trim();
+    DateTime? parseDmy(String sep) {
+      final parts = s.split(sep);
+      if (parts.length != 3) return null;
+      final d = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      final y = int.tryParse(parts[2]);
+      if (d == null || m == null || y == null) return null;
+      return DateTime(y, m, d);
+    }
+
+    return parseDmy('/') ?? parseDmy('-');
+  }
   return null;
 }
 
