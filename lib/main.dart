@@ -292,8 +292,9 @@ class DashboardTab extends StatelessWidget {
           if (person != null) people.add(person);
           if (isPending) {
             pendingCount++;
-            if (t['type'] == 'lend') lentAmount += (t['amount'] ?? 0).toDouble();
-            else if (t['type'] == 'borrow') borrowedAmount += (t['amount'] ?? 0).toDouble();
+            if (t['type'] == 'lend') {
+              lentAmount += (t['amount'] ?? 0).toDouble();
+            } else if (t['type'] == 'borrow') borrowedAmount += (t['amount'] ?? 0).toDouble();
           }
         }
         final netBalance = lentAmount - borrowedAmount;
@@ -485,8 +486,9 @@ class PeopleTab extends StatelessWidget {
           peopleCounts[person] = (peopleCounts[person] ?? 0) + 1;
           if (!isPending) continue;
           final amount = (t['amount'] ?? 0).toDouble();
-          if (t['type'] == 'lend') peopleBalances[person] = (peopleBalances[person] ?? 0) + amount;
-          else if (t['type'] == 'borrow') peopleBalances[person] = (peopleBalances[person] ?? 0) - amount;
+          if (t['type'] == 'lend') {
+            peopleBalances[person] = (peopleBalances[person] ?? 0) + amount;
+          } else if (t['type'] == 'borrow') peopleBalances[person] = (peopleBalances[person] ?? 0) - amount;
         }
         final sortedPeople = peopleBalances.entries.toList()..sort((a, b) => b.value.abs().compareTo(a.value.abs()));
         return Padding(
@@ -549,6 +551,11 @@ class TransactionCard extends StatelessWidget {
     final person = transaction['person'] ?? transaction['personName'] ?? 'Unknown';
     final amount = (transaction['amount'] ?? 0).toDouble();
     final desc = transaction['description'] ?? '';
+
+    final date = _tsToDateTime(transaction['date']) ?? _tsToDateTime(transaction['createdAt']);
+    final dueDate = _tsToDateTime(transaction['dueDate']);
+    final reminderAt = _tsToDateTime(transaction['reminderAt']);
+    final reminderEnabled = (transaction['reminderEnabled'] == true) || reminderAt != null;
     return Container(
       margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: AppColors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border.withOpacity(0.3))),
@@ -564,6 +571,28 @@ class TransactionCard extends StatelessWidget {
           ])),
           Text('${isLend ? '+' : '-'}\u{20B9}${_formatAmount(amount)}', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: isLend ? AppColors.success : AppColors.danger)),
         ]),
+
+        if (date != null || dueDate != null || reminderEnabled) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              if (date != null)
+                _infoChip(Icons.event_rounded, 'Date: ${_formatDate(date)}', AppColors.primary.withOpacity(0.15), AppColors.primary),
+              if (dueDate != null)
+                _infoChip(Icons.event_busy_rounded, 'Due: ${_formatDate(dueDate)}', AppColors.warning.withOpacity(0.15), AppColors.warning),
+              if (reminderEnabled)
+                _infoChip(
+                  Icons.notifications_active_rounded,
+                  reminderAt != null ? 'Reminder: ${_formatDateTime(reminderAt)}' : 'Reminder enabled',
+                  AppColors.secondary.withOpacity(0.15),
+                  AppColors.secondary,
+                ),
+            ],
+          ),
+        ],
+
         if (showActions) ...[
           const SizedBox(height: 14),
           Row(children: [
@@ -626,6 +655,11 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
   final descCtrl = TextEditingController(text: isEdit ? (transaction?['description'] ?? '') : '');
   String selectedType = isEdit ? (transaction?['type'] ?? 'lend') : (type ?? 'lend');
 
+  final baseDate = _tsToDateTime(transaction?['date']) ?? _tsToDateTime(transaction?['createdAt']) ?? DateTime.now();
+  DateTime selectedDate = DateTime(baseDate.year, baseDate.month, baseDate.day);
+  DateTime? dueDate = _tsToDateTime(transaction?['dueDate']);
+  bool reminderEnabled = (transaction?['reminderEnabled'] == true) || transaction?['reminderAt'] != null;
+  DateTime? reminderAt = _tsToDateTime(transaction?['reminderAt']);
   showModalBottomSheet(
     context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
     builder: (context) => StatefulBuilder(builder: (context, setState) {
@@ -718,6 +752,102 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
             },
           ),
           const SizedBox(height: 12),
+
+          _buildPickerField(
+            label: 'Date',
+            icon: Icons.event_rounded,
+            valueText: _formatDate(selectedDate),
+            onTap: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: selectedDate,
+                firstDate: DateTime(2000),
+                lastDate: DateTime(2100),
+                builder: (context, child) => Theme(data: Theme.of(context).copyWith(colorScheme: const ColorScheme.dark(primary: AppColors.primary)), child: child!),
+              );
+              if (picked != null) setState(() => selectedDate = DateTime(picked.year, picked.month, picked.day));
+            },
+          ),
+          const SizedBox(height: 12),
+
+          _buildPickerField(
+            label: 'Due Date (optional)',
+            icon: Icons.event_busy_rounded,
+            valueText: dueDate == null ? 'Not set' : _formatDate(dueDate!),
+            onTap: () async {
+              final initial = dueDate ?? selectedDate;
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: initial,
+                firstDate: DateTime(2000),
+                lastDate: DateTime(2100),
+                builder: (context, child) => Theme(data: Theme.of(context).copyWith(colorScheme: const ColorScheme.dark(primary: AppColors.primary)), child: child!),
+              );
+              if (picked != null) setState(() => dueDate = DateTime(picked.year, picked.month, picked.day));
+            },
+            onClear: dueDate == null ? null : () => setState(() => dueDate = null),
+          ),
+          const SizedBox(height: 12),
+
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.dark,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border.withOpacity(0.3)),
+            ),
+            child: SwitchListTile(
+              value: reminderEnabled,
+              onChanged: (v) {
+                setState(() {
+                  reminderEnabled = v;
+                  if (!reminderEnabled) {
+                    reminderAt = null;
+                  } else {
+                    reminderAt ??= DateTime.now().add(const Duration(hours: 1));
+                  }
+                });
+              },
+              activeColor: AppColors.primary,
+              title: const Text('Reminder', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                reminderEnabled
+                    ? (reminderAt == null ? 'Tap below to pick time' : _formatDateTime(reminderAt!))
+                    : 'Off',
+                style: const TextStyle(color: AppColors.textSecondary),
+              ),
+            ),
+          ),
+
+          if (reminderEnabled) ...[
+            const SizedBox(height: 12),
+            _buildPickerField(
+              label: 'Reminder Time',
+              icon: Icons.schedule_rounded,
+              valueText: reminderAt == null ? 'Not set' : _formatDateTime(reminderAt!),
+              onTap: () async {
+                final base = reminderAt ?? DateTime.now();
+                final pickedDate = await showDatePicker(
+                  context: context,
+                  initialDate: DateTime(base.year, base.month, base.day),
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime(2100),
+                  builder: (context, child) => Theme(data: Theme.of(context).copyWith(colorScheme: const ColorScheme.dark(primary: AppColors.primary)), child: child!),
+                );
+                if (pickedDate == null) return;
+                final pickedTime = await showTimePicker(
+                  context: context,
+                  initialTime: TimeOfDay(hour: base.hour, minute: base.minute),
+                  builder: (context, child) => Theme(data: Theme.of(context).copyWith(colorScheme: const ColorScheme.dark(primary: AppColors.primary)), child: child!),
+                );
+                if (pickedTime == null) return;
+                setState(() {
+                  reminderAt = DateTime(pickedDate.year, pickedDate.month, pickedDate.day, pickedTime.hour, pickedTime.minute);
+                });
+              },
+              onClear: reminderAt == null ? null : () => setState(() => reminderAt = null),
+            ),
+          ],
+
           _buildTextField(amountCtrl, 'Amount (\u{20B9})', Icons.currency_rupee_rounded, isNumber: true),
           const SizedBox(height: 12),
           _buildTextField(descCtrl, 'Description (optional)', Icons.notes_rounded, maxLines: 2),
@@ -738,7 +868,24 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
                 setState(() => isLoading = true);
                 try {
                   final uid = FirebaseAuth.instance.currentUser!.uid;
-                  final data = {'type': selectedType, 'person': personCtrl.text.trim(), 'amount': amount, 'description': descCtrl.text.trim()};
+                  final Map<String, dynamic> data = {
+                    'type': selectedType,
+                    'person': personCtrl.text.trim(),
+                    'amount': amount,
+                    'description': descCtrl.text.trim(),
+                    'date': Timestamp.fromDate(DateTime(selectedDate.year, selectedDate.month, selectedDate.day)),
+                    'reminderEnabled': reminderEnabled,
+                  };
+                  if (dueDate != null) {
+                    data['dueDate'] = Timestamp.fromDate(DateTime(dueDate!.year, dueDate!.month, dueDate!.day));
+                  } else if (isEdit) {
+                    data['dueDate'] = FieldValue.delete();
+                  }
+                  if (reminderEnabled && reminderAt != null) {
+                    data['reminderAt'] = Timestamp.fromDate(reminderAt!);
+                  } else if (isEdit) {
+                    data['reminderAt'] = FieldValue.delete();
+                  }
                   if (isEdit) {
                     await FirebaseFirestore.instance.collection('users').doc(uid).collection('transactions').doc(transaction!['id']).update(data);
                   } else {
@@ -771,8 +918,73 @@ Widget _buildTextField(TextEditingController ctrl, String label, IconData icon, 
   );
 }
 
-String _formatAmount(double amount) {
-  if (amount >= 100000) return '${(amount / 100000).toStringAsFixed(1)}L';
-  if (amount >= 1000) return '${(amount / 1000).toStringAsFixed(1)}K';
-  return amount.toStringAsFixed(0);
+Widget _buildPickerField({
+  required String label,
+  required IconData icon,
+  required String valueText,
+  required VoidCallback onTap,
+  VoidCallback? onClear,
+}) {
+  return InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(12),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+        color: AppColors.dark,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border.withOpacity(0.3)),
+      ),
+      child: Row(children: [
+        Icon(icon, color: AppColors.textSecondary, size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const SizedBox(height: 4),
+            Text(valueText, style: const TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+        if (onClear != null)
+          IconButton(
+            onPressed: onClear,
+            icon: const Icon(Icons.clear_rounded, color: AppColors.textSecondary, size: 18),
+            splashRadius: 18,
+          )
+        else
+          const Icon(Icons.chevron_right_rounded, color: AppColors.textSecondary),
+      ]),
+    ),
+  );
 }
+
+Widget _infoChip(IconData icon, String text, Color bg, Color fg) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 14, color: fg),
+      const SizedBox(width: 6),
+      Text(text, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
+    ]),
+  );
+}
+
+String _formatAmount(num value) {
+  final v = value.toDouble();
+  if ((v - v.roundToDouble()).abs() < 0.000001) return v.toStringAsFixed(0);
+  return v.toStringAsFixed(2);
+}
+
+DateTime? _tsToDateTime(dynamic ts) {
+  if (ts == null) return null;
+  if (ts is DateTime) return ts;
+  if (ts is Timestamp) return ts.toDate();
+  return null;
+}
+
+String _two(int n) => n.toString().padLeft(2, '0');
+String _formatDate(DateTime d) => '${_two(d.day)}/${_two(d.month)}/${d.year}';
+String _formatDateTime(DateTime d) => '${_two(d.day)}/${_two(d.month)}/${d.year} ${_two(d.hour)}:${_two(d.minute)}';
+
+
