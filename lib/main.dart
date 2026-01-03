@@ -296,7 +296,9 @@ class DashboardTab extends StatelessWidget {
             pendingCount++;
             if (t['type'] == 'lend') {
               lentAmount += (t['amount'] ?? 0).toDouble();
-            } else if (t['type'] == 'borrow') borrowedAmount += (t['amount'] ?? 0).toDouble();
+            } else if (t['type'] == 'borrow') {
+              borrowedAmount += (t['amount'] ?? 0).toDouble();
+            }
           }
         }
         final netBalance = lentAmount - borrowedAmount;
@@ -610,7 +612,9 @@ class PeopleTab extends StatelessWidget {
           final amount = (t['amount'] ?? 0).toDouble();
           if (t['type'] == 'lend') {
             peopleBalances[person] = (peopleBalances[person] ?? 0) + amount;
-          } else if (t['type'] == 'borrow') peopleBalances[person] = (peopleBalances[person] ?? 0) - amount;
+          } else if (t['type'] == 'borrow') {
+            peopleBalances[person] = (peopleBalances[person] ?? 0) - amount;
+          }
         }
         final sortedPeople = peopleBalances.entries.toList()..sort((a, b) => b.value.abs().compareTo(a.value.abs()));
         return Padding(
@@ -674,19 +678,19 @@ class RemindersTab extends StatelessWidget {
         if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: AppColors.danger)));
 
         final docs = snapshot.data?.docs ?? [];
-        var reminders = docs.map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id}).where((t) {
-          final reminderAt = _tsToDateTime(t['reminderAt'] ?? t['reminder_at'] ?? t['reminderDate'] ?? t['reminder_date'] ?? t['reminder']);
-          final enabled = _truthy(t['reminderEnabled'] ?? t['reminder_enabled'] ?? t['isReminder'] ?? t['is_reminder']) || reminderAt != null;
-          return enabled;
-        }).toList();
+        final today = _dateOnly(DateTime.now());
+
+        var reminders = docs
+            .map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id})
+            .where((t) => _shouldShowWebStyleReminder(t, today))
+            .toList();
 
         reminders.sort((a, b) {
-          final aAt = _tsToDateTime(a['reminderAt'] ?? a['reminder_at'] ?? a['reminderDate'] ?? a['reminder_date'] ?? a['reminder']);
-          final bAt = _tsToDateTime(b['reminderAt'] ?? b['reminder_at'] ?? b['reminderDate'] ?? b['reminder_date'] ?? b['reminder']);
-          if (aAt == null && bAt == null) return 0;
-          if (aAt == null) return 1;
-          if (bAt == null) return -1;
-          return aAt.compareTo(bAt);
+          final aDue = _dateOnly(_getDueDate(a)!);
+          final bDue = _dateOnly(_getDueDate(b)!);
+          final aDays = aDue.difference(today).inDays;
+          final bDays = bDue.difference(today).inDays;
+          return aDays.compareTo(bDays);
         });
 
         return Padding(
@@ -725,8 +729,19 @@ class TransactionCard extends StatelessWidget {
 
     final date = _tsToDateTime(transaction['date'] ?? transaction['createdAt']);
     final dueDate = _tsToDateTime(transaction['dueDate'] ?? transaction['due_date'] ?? transaction['due']);
-    final reminderAt = _tsToDateTime(transaction['reminderAt'] ?? transaction['reminder_at'] ?? transaction['reminderDate'] ?? transaction['reminder_date'] ?? transaction['reminder']);
-    final reminderEnabled = _truthy(transaction['reminderEnabled'] ?? transaction['reminder_enabled'] ?? transaction['isReminder'] ?? transaction['is_reminder']) || reminderAt != null;
+    final reminderOption = _getReminderOption(transaction);
+    final customReminderDate = _getCustomReminderDate(transaction);
+    final reminderAt = _tsToDateTime(transaction['reminderAt'] ?? transaction['reminder_at'] ?? transaction['reminderDate'] ?? transaction['reminder_date']);
+    final reminderEnabled = reminderOption != 'none' || _truthy(transaction['reminderEnabled'] ?? transaction['reminder_enabled'] ?? transaction['isReminder'] ?? transaction['is_reminder']) || reminderAt != null;
+
+    String? reminderLabel;
+    if (reminderOption == 'custom' && customReminderDate != null) {
+      reminderLabel = 'Reminder: ${_formatDate(customReminderDate)}';
+    } else if (reminderOption == '1' || reminderOption == '3' || reminderOption == '7') {
+      reminderLabel = 'Reminder: $reminderOption day(s) before';
+    } else if (reminderAt != null) {
+      reminderLabel = 'Reminder: ${_formatDateTime(reminderAt)}';
+    }
     return Container(
       margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: AppColors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border.withOpacity(0.3))),
@@ -756,7 +771,7 @@ class TransactionCard extends StatelessWidget {
               if (reminderEnabled)
                 _infoChip(
                   Icons.notifications_active_rounded,
-                  reminderAt != null ? 'Reminder: ${_formatDateTime(reminderAt)}' : 'Reminder enabled',
+                  reminderLabel ?? 'Reminder enabled',
                   AppColors.secondary.withOpacity(0.15),
                   AppColors.secondary,
                 ),
@@ -826,16 +841,24 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
   final descCtrl = TextEditingController(text: isEdit ? (transaction?['description'] ?? '') : '');
   String selectedType = isEdit ? (transaction?['type'] ?? 'lend') : (type ?? 'lend');
 
+  bool isLoading = false;
+
   final baseDate = _tsToDateTime(transaction?['date']) ?? _tsToDateTime(transaction?['createdAt']) ?? DateTime.now();
   DateTime selectedDate = DateTime(baseDate.year, baseDate.month, baseDate.day);
   DateTime? dueDate = _tsToDateTime(transaction?['dueDate'] ?? transaction?['due_date'] ?? transaction?['due']);
-  final existingReminderAt = _tsToDateTime(transaction?['reminderAt'] ?? transaction?['reminder_at'] ?? transaction?['reminderDate'] ?? transaction?['reminder_date'] ?? transaction?['reminder']);
-  bool reminderEnabled = _truthy(transaction?['reminderEnabled'] ?? transaction?['reminder_enabled'] ?? transaction?['isReminder'] ?? transaction?['is_reminder']) || existingReminderAt != null;
-  DateTime? reminderAt = existingReminderAt;
+  String reminderOption = _getReminderOption(transaction);
+  DateTime? customReminderDate = _getCustomReminderDate(transaction);
+
+  // Backward-compat: if old reminderAt exists but no web-style fields, treat as custom.
+  final existingReminderAt = _tsToDateTime(transaction?['reminderAt'] ?? transaction?['reminder_at'] ?? transaction?['reminderDate'] ?? transaction?['reminder_date']);
+  if (reminderOption == 'none' && customReminderDate == null && existingReminderAt != null) {
+    reminderOption = 'custom';
+    customReminderDate = DateTime(existingReminderAt.year, existingReminderAt.month, existingReminderAt.day);
+  }
+
   showModalBottomSheet(
     context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
     builder: (context) => StatefulBuilder(builder: (context, setState) {
-      bool isLoading = false;
       final currentIsLend = selectedType == 'lend';
       return Container(
         decoration: const BoxDecoration(color: AppColors.cardBg, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
@@ -961,63 +984,61 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
           ),
           const SizedBox(height: 12),
 
+          // Web-style reminder options: none / 1 / 3 / 7 / custom date
           Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: AppColors.dark,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AppColors.border.withOpacity(0.3)),
             ),
-            child: SwitchListTile(
-              value: reminderEnabled,
-              onChanged: (v) {
-                setState(() {
-                  reminderEnabled = v;
-                  if (!reminderEnabled) {
-                    reminderAt = null;
-                  } else {
-                    reminderAt ??= DateTime.now().add(const Duration(hours: 1));
-                  }
-                });
-              },
-              activeColor: AppColors.primary,
-              title: const Text('Reminder', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                reminderEnabled
-                    ? (reminderAt == null ? 'Tap below to pick time' : _formatDateTime(reminderAt!))
-                    : 'Off',
-                style: const TextStyle(color: AppColors.textSecondary),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: reminderOption,
+                isExpanded: true,
+                dropdownColor: AppColors.dark,
+                iconEnabledColor: AppColors.textSecondary,
+                style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w600),
+                items: const [
+                  DropdownMenuItem(value: 'none', child: Text('No reminder')),
+                  DropdownMenuItem(value: '1', child: Text('1 day before')),
+                  DropdownMenuItem(value: '3', child: Text('3 days before')),
+                  DropdownMenuItem(value: '7', child: Text('7 days before')),
+                  DropdownMenuItem(value: 'custom', child: Text('Select date...')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() {
+                    reminderOption = v;
+                    if (reminderOption != 'custom') customReminderDate = null;
+                  });
+                },
               ),
             ),
           ),
 
-          if (reminderEnabled) ...[
+          if (reminderOption == 'custom') ...[
             const SizedBox(height: 12),
             _buildPickerField(
-              label: 'Reminder Time',
-              icon: Icons.schedule_rounded,
-              valueText: reminderAt == null ? 'Not set' : _formatDateTime(reminderAt!),
+              label: 'Reminder Date',
+              icon: Icons.notifications_active_rounded,
+              valueText: customReminderDate == null ? 'Not set' : _formatDate(customReminderDate!),
               onTap: () async {
-                final base = reminderAt ?? DateTime.now();
-                final pickedDate = await showDatePicker(
+                final initial = customReminderDate ?? dueDate ?? selectedDate;
+                final picked = await showDatePicker(
                   context: context,
-                  initialDate: DateTime(base.year, base.month, base.day),
+                  initialDate: initial,
                   firstDate: DateTime(2000),
                   lastDate: DateTime(2100),
                   builder: (context, child) => Theme(data: Theme.of(context).copyWith(colorScheme: const ColorScheme.dark(primary: AppColors.primary)), child: child!),
                 );
-                if (pickedDate == null) return;
-                final pickedTime = await showTimePicker(
-                  context: context,
-                  initialTime: TimeOfDay(hour: base.hour, minute: base.minute),
-                  builder: (context, child) => Theme(data: Theme.of(context).copyWith(colorScheme: const ColorScheme.dark(primary: AppColors.primary)), child: child!),
-                );
-                if (pickedTime == null) return;
-                setState(() {
-                  reminderAt = DateTime(pickedDate.year, pickedDate.month, pickedDate.day, pickedTime.hour, pickedTime.minute);
-                });
+                if (picked != null) setState(() => customReminderDate = DateTime(picked.year, picked.month, picked.day));
               },
-              onClear: reminderAt == null ? null : () => setState(() => reminderAt = null),
+              onClear: customReminderDate == null ? null : () => setState(() => customReminderDate = null),
             ),
+          ] else if (reminderOption != 'none' && dueDate == null) ...[
+            const SizedBox(height: 8),
+            const Text('Tip: Set a due date to use 1/3/7 day reminders (same as web).', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
           ],
 
           _buildTextField(amountCtrl, 'Amount (\u{20B9})', Icons.currency_rupee_rounded, isNumber: true),
@@ -1030,6 +1051,10 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
               onPressed: isLoading ? null : () async {
                 if (personCtrl.text.isEmpty || amountCtrl.text.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill required fields'), backgroundColor: AppColors.warning));
+                  return;
+                }
+                if (reminderOption == 'custom' && customReminderDate == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Select a reminder date'), backgroundColor: AppColors.warning));
                   return;
                 }
                 final amount = double.tryParse(amountCtrl.text);
@@ -1046,16 +1071,31 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
                     'amount': amount,
                     'description': descCtrl.text.trim(),
                     'date': Timestamp.fromDate(DateTime(selectedDate.year, selectedDate.month, selectedDate.day)),
-                    'reminderEnabled': reminderEnabled,
+                    // Web-compatible reminder fields
+                    'reminder': reminderOption,
+                    'reminderEnabled': reminderOption != 'none',
                   };
                   if (dueDate != null) {
                     data['dueDate'] = Timestamp.fromDate(DateTime(dueDate!.year, dueDate!.month, dueDate!.day));
                   } else if (isEdit) {
                     data['dueDate'] = FieldValue.delete();
                   }
-                  if (reminderEnabled && reminderAt != null) {
-                    data['reminderAt'] = Timestamp.fromDate(reminderAt!);
+
+                  // Web uses ISO date string 'YYYY-MM-DD' for customReminderDate.
+                  if (reminderOption == 'custom' && customReminderDate != null) {
+                    data['customReminderDate'] = '${customReminderDate!.year.toString().padLeft(4, '0')}-${customReminderDate!.month.toString().padLeft(2, '0')}-${customReminderDate!.day.toString().padLeft(2, '0')}';
+                    // Backward-compat for existing mobile logic
+                    data['reminderAt'] = Timestamp.fromDate(DateTime(customReminderDate!.year, customReminderDate!.month, customReminderDate!.day));
                   } else if (isEdit) {
+                    data['customReminderDate'] = FieldValue.delete();
+                  }
+
+                  // For 1/3/7 reminders, store a derived reminderAt (start of reminder window) for backward compatibility.
+                  final reminderDays = int.tryParse(reminderOption);
+                  if (reminderDays != null && reminderDays > 0 && dueDate != null) {
+                    final start = DateTime(dueDate!.year, dueDate!.month, dueDate!.day).subtract(Duration(days: reminderDays));
+                    data['reminderAt'] = Timestamp.fromDate(start);
+                  } else if (reminderOption == 'none' && isEdit) {
                     data['reminderAt'] = FieldValue.delete();
                   }
                   if (isEdit) {
@@ -1064,7 +1104,12 @@ void showTransactionDialog(BuildContext context, {String? type, Map<String, dyna
                     await FirebaseFirestore.instance.collection('users').doc(uid).collection('transactions').add({...data, 'status': 'pending', 'settled': false, 'createdAt': FieldValue.serverTimestamp()});
                   }
                   if (context.mounted) { Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(isEdit ? 'Updated!' : 'Added!'), backgroundColor: AppColors.success)); }
-                } catch (e) { setState(() => isLoading = false); if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger)); }
+                } catch (e) {
+                  setState(() => isLoading = false);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger));
+                  }
+                }
               },
               style: ElevatedButton.styleFrom(backgroundColor: currentIsLend ? AppColors.success : AppColors.danger, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)), elevation: 0),
               child: isLoading ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(isEdit ? Icons.save_rounded : Icons.add_rounded), const SizedBox(width: 8), Text(isEdit ? 'Save Changes' : 'Add Transaction', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600))]),
@@ -1172,6 +1217,62 @@ DateTime? _tsToDateTime(dynamic ts) {
     return parseDmy('/') ?? parseDmy('-');
   }
   return null;
+}
+
+DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+DateTime? _getDueDate(Map<String, dynamic> t) {
+  return _tsToDateTime(t['dueDate'] ?? t['due_date'] ?? t['due']);
+}
+
+String _getReminderOption(Map<String, dynamic>? t) {
+  if (t == null) return 'none';
+  final dynamic raw = t['reminder'] ?? t['reminderOption'] ?? t['reminder_option'];
+  if (raw == null) return 'none';
+  if (raw is int) return raw.toString();
+  if (raw is double) return raw.toInt().toString();
+  if (raw is String) {
+    final v = raw.trim().toLowerCase();
+    if (v == 'none' || v == 'custom' || v == '1' || v == '3' || v == '7') return v;
+  }
+  return 'none';
+}
+
+DateTime? _getCustomReminderDate(Map<String, dynamic>? t) {
+  if (t == null) return null;
+  final v = t['customReminderDate'] ?? t['custom_reminder_date'] ?? t['customReminder'] ?? t['custom_reminder'];
+  final dt = _tsToDateTime(v);
+  if (dt == null) return null;
+  return DateTime(dt.year, dt.month, dt.day);
+}
+
+bool _isSettled(Map<String, dynamic> t) {
+  return t['settled'] == true || (t['status']?.toString().toLowerCase() == 'settled');
+}
+
+bool _shouldShowWebStyleReminder(Map<String, dynamic> t, DateTime today) {
+  final type = t['type']?.toString();
+  if (type != 'lend' && type != 'borrow') return false;
+  if (_isSettled(t)) return false;
+
+  final due = _getDueDate(t);
+  if (due == null) return false; // web only reminds when dueDate exists
+
+  final dueDate = _dateOnly(due);
+  final daysUntilDue = dueDate.difference(today).inDays;
+  if (daysUntilDue < 0) return true;
+  if (daysUntilDue == 0) return true;
+
+  final reminder = _getReminderOption(t);
+  if (reminder == 'custom') {
+    final custom = _getCustomReminderDate(t);
+    if (custom == null) return false;
+    return !today.isBefore(_dateOnly(custom));
+  }
+
+  final reminderDays = int.tryParse(reminder) ?? 0;
+  if (reminderDays <= 0) return false;
+  return daysUntilDue <= reminderDays;
 }
 
 bool _truthy(dynamic v) {
